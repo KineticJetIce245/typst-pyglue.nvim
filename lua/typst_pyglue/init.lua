@@ -11,8 +11,8 @@ M.print_message = print_message
 
 M.setup = function(opts)
 	config.options = vim.tbl_deep_extend("force", config.defaults, opts or {})
-	-- spin up lsp client
 	buffers.lsp_cmd = config.options.python_lsp_cmd
+	buffers.setup_diagnostics()
 
 	if config.options.create_keymaps then
 		-- Run all code snippets

@@ -1,17 +1,22 @@
 local M = {
 	lsp_cmd = nil,
+	ltbufs = {},
 }
 
-local hbufs = {}
-local hbufstatus = true -- Global flag, a buffer that is unsynced will have the opposite value of this flag
-local bufsbin = {}
+local hbufs = {
+	reflection = {},
+	status = {},
+}
+local bufsbin = {} -- Recyclin bin
 
 local function assign_buf() -- Recyle buffers if possible
 	if #bufsbin > 0 then
 		return table.remove(bufsbin) -- Recycle an old buffer
 	else
 		local newbuf = vim.api.nvim_create_buf(false, true) -- Create a new hidden buffer
+		local virtual_name = string.format(".virtual.%s.py", newbuf)
 		vim.api.nvim_set_option_value("filetype", "python", { buf = newbuf })
+		vim.api.nvim_buf_set_name(newbuf, virtual_name)
 
 		vim.lsp.start({
 			name = "pyglue_bglsp",
@@ -25,57 +30,87 @@ local function assign_buf() -- Recyle buffers if possible
 	end
 end
 
-local function getbuf(name)
-	if not hbufs[name] then
-		hbufs[name] = {
-			status = hbufstatus,
+local function getbuf(mainbuf, name)
+	if not hbufs[mainbuf] then
+		hbufs[mainbuf] = {}
+	end
+	if not hbufs[mainbuf][name] then
+		hbufs[mainbuf][name] = {
+			status = hbufs.status[mainbuf], -- Sync with the global flag
 			bufnr = assign_buf(),
 			chunk_rows = {},
 		}
-		vim.api.nvim_set_option_value("filetype", "python", { buf = hbufs[name].bufnr })
+		hbufs.reflection[hbufs[mainbuf][name].bufnr] = { mainbuf = mainbuf, name = name } -- Add to reflection table
 	end
-	return hbufs[name]
+	hbufs[mainbuf][name].status = hbufs.status[mainbuf] -- Ensure the buffer's status is in sync with the global flag
+	return hbufs[mainbuf][name]
 end
 
-local function syncbuf(snippets)
+local function unassign_buf(mainbuf, bufnr)
+	table.insert(bufsbin, bufnr) -- Add to recycle bin
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+	local name = hbufs.reflection[bufnr].name
+	hbufs[mainbuf][name] = nil -- Clear from tracking table
+	hbufs.reflection[bufnr] = nil -- Clear reflection entry
+end
+
+local function syncbuf(mainbuf, snippets)
+	M.ltbufs[mainbuf] = {} -- Reset line-to-buffer mapping for cmp
 	-- Invert flag
-	hbufstatus = not hbufstatus
+	if hbufs.status[mainbuf] == nil then
+		hbufs.status[mainbuf] = true -- Initialize on first run
+	end
+	hbufs.status[mainbuf] = not hbufs.status[mainbuf]
 
 	for name, chunks in pairs(snippets) do
-		local bufr = getbuf(name)
-		bufr.status = hbufstatus -- Sync status with the global flag
+		local bufr = getbuf(mainbuf, name)
 		local buflines = {}
 		bufr.chunk_rows = {}
 		for _, chunk in ipairs(chunks) do
-			table.move(chunk.lines, 1, #chunk.lines, #buflines + 1, buflines)
-			table.insert(bufr.chunk_rows, { chunk.start_row, chunk.end_row })
+			for i, line in ipairs(chunk.lines) do
+				table.insert(buflines, line)
+				table.insert(bufr.chunk_rows, chunk.start_row + i + 1)
+				M.ltbufs[mainbuf][chunk.start_row + i + 1] = { lnum = #bufr.chunk_rows, bufr = bufr }
+			end
 		end
+		-- Extra line at the end to prevent out-of-bounds errors in diagnostics
+		table.insert(bufr.chunk_rows, bufr.chunk_rows[#bufr.chunk_rows] + 1)
 		-- Fill up the buffer with the new lines
 		vim.api.nvim_buf_set_lines(bufr.bufnr, 0, -1, false, buflines)
-		local virtual_name = string.format("pyglue_virtual_%s.py", name)
-		pcall(vim.api.nvim_buf_set_name, bufr.bufnr, virtual_name)
 	end
 
-	for name, bufr in pairs(hbufs) do
-		if bufr.status ~= hbufstatus then -- Unsynced buffer
-			table.insert(bufsbin, bufr.bufnr) -- Add to recycle bin
-			vim.api.nvim_buf_set_lines(bufr.bufnr, 0, -1, false, {})
-			hbufs[name] = nil -- Clear from tracking table
+	for _, bufr in pairs(hbufs[mainbuf]) do
+		if bufr.status ~= hbufs.status[mainbuf] then -- Unsynced buffer
+			unassign_buf(mainbuf, bufr.bufnr)
 		end
 	end
 end
 
-local function printhbufs()
-	for name, bufr in pairs(hbufs) do
-		if not bufr.bufnr or not vim.api.nvim_buf_is_valid(bufr.bufnr) then
-			print("Error: Hidden buffer does not exist.")
-			return
+function M.printhbufs()
+	for mbuf, _ in pairs(hbufs) do
+		if mbuf == "reflection" then
+			vim.print("Reflection Table:")
+			vim.print(hbufs.reflection)
+			goto continue
+		elseif mbuf == "status" then
+			vim.print("Status Table:")
+			vim.print(hbufs.status)
+			goto continue
 		end
+		for name, bufr in pairs(hbufs[mbuf]) do
+			print("Buffer for", mbuf, "->", name, bufr.bufnr, "Status:", bufr.status)
+			if not bufr.bufnr or not vim.api.nvim_buf_is_valid(bufr.bufnr) then
+				print("Error: Hidden buffer does not exist.")
+				return
+			end
 
-		local lines = vim.api.nvim_buf_get_lines(bufr.bufnr, 0, -1, false)
+			local lines = vim.api.nvim_buf_get_lines(bufr.bufnr, 0, -1, false)
 
-		print("Hidden Buffer (", name, bufr.bufnr, ") Contents:")
-		print(vim.inspect(lines))
+			print("Hidden Buffer from", mbuf, ": (", name, bufr.bufnr, ")")
+			vim.print(bufr.chunk_rows)
+			print(vim.inspect(lines))
+		end
+		::continue::
 	end
 end
 
@@ -89,7 +124,9 @@ local extraction_query = [[
 
 local function strip_content(content)
 	local lines = {}
-	for line in content:gmatch("[^\r\n]+") do
+
+	content = content .. "\n"
+	for line in content:gmatch("(.-)\r?\n") do
 		table.insert(lines, line)
 	end
 
@@ -119,7 +156,7 @@ function M.extract_snippet(bufnr)
 
 	local query = vim.treesitter.query.parse("typst", extraction_query)
 
-	for pattern, match, metadata in query:iter_matches(root, bufnr, 0, -1) do
+	for _, match, _ in query:iter_matches(root, bufnr, 0, -1) do
 		local namespace = nil
 		local code_text = nil
 		local start_row, end_row = nil, nil
@@ -132,6 +169,9 @@ function M.extract_snippet(bufnr)
 
 			if capture_name == "python.namespace" then
 				namespace = vim.treesitter.get_node_text(node, bufnr):gsub('"', "")
+				if namespace == "" then
+					namespace = "global"
+				end
 			elseif capture_name == "python.code" then
 				code_text = vim.treesitter.get_node_text(node, bufnr)
 				start_row, _, end_row, _ = node:range()
@@ -156,8 +196,50 @@ function M.extract_snippet(bufnr)
 		table.insert(snippets[namespace], chunk)
 	end
 
-	syncbuf(snippets)
-	printhbufs()
+	syncbuf(bufnr, snippets)
+	M.printhbufs()
+end
+
+function M.setup_diagnostics()
+	vim.api.nvim_create_autocmd("DiagnosticChanged", {
+		callback = function(args)
+			if hbufs.reflection[args.buf] == nil then
+				return
+			end
+
+			local mainbuf = hbufs.reflection[args.buf].mainbuf
+			local diagnostics = vim.diagnostic.get(args.buf)
+			local name = hbufs.reflection[args.buf].name
+
+			for _, diag in ipairs(diagnostics) do
+				local new_diag = diag
+
+				new_diag.lnum = hbufs[mainbuf][name].chunk_rows[diag.lnum + 1] - 1
+
+				new_diag.end_lnum = hbufs[mainbuf][name].chunk_rows[diag.end_lnum + 1] - 1
+
+				if not new_diag.end_lnum or not new_diag.lnum then
+					vim.notify("Warning: Diagnostic missing end_lnum or num, skipping adjustment.", vim.log.levels.WARN)
+				end
+
+				if new_diag.lnum < 0 then
+					new_diag.lnum = 0
+				end
+
+				if new_diag.end_lnum < 0 then
+					new_diag.end_lnum = 0
+				end
+			end
+
+			local diag_namespace = vim.api.nvim_create_namespace("pyglue" .. name)
+			vim.schedule(function()
+				if vim.api.nvim_buf_is_valid(mainbuf) then
+					-- Clears the main buffer and inserts the new diagnostic lines
+					vim.diagnostic.set(diag_namespace, mainbuf, diagnostics)
+				end
+			end)
+		end,
+	})
 end
 
 return M
