@@ -4,12 +4,32 @@ local M = {
 
 local hbufs = {}
 local hbufstatus = true -- Global flag, a buffer that is unsynced will have the opposite value of this flag
+local bufsbin = {}
+
+local function assign_buf() -- Recyle buffers if possible
+	if #bufsbin > 0 then
+		return table.remove(bufsbin) -- Recycle an old buffer
+	else
+		local newbuf = vim.api.nvim_create_buf(false, true) -- Create a new hidden buffer
+		vim.api.nvim_set_option_value("filetype", "python", { buf = newbuf })
+
+		vim.lsp.start({
+			name = "pyglue_bglsp",
+			cmd = M.lsp_cmd,
+			root_dir = vim.fn.getcwd(),
+		}, {
+			bufnr = newbuf,
+		})
+
+		return newbuf
+	end
+end
 
 local function getbuf(name)
 	if not hbufs[name] then
 		hbufs[name] = {
 			status = hbufstatus,
-			bufnr = vim.api.nvim_create_buf(false, true),
+			bufnr = assign_buf(),
 			chunk_rows = {},
 		}
 		vim.api.nvim_set_option_value("filetype", "python", { buf = hbufs[name].bufnr })
@@ -32,25 +52,16 @@ local function syncbuf(snippets)
 		end
 		-- Fill up the buffer with the new lines
 		vim.api.nvim_buf_set_lines(bufr.bufnr, 0, -1, false, buflines)
+		local virtual_name = string.format("pyglue_virtual_%s.py", name)
+		pcall(vim.api.nvim_buf_set_name, bufr.bufnr, virtual_name)
 	end
 
 	for name, bufr in pairs(hbufs) do
 		if bufr.status ~= hbufstatus then -- Unsynced buffer
-			vim.api.nvim_buf_delete(bufr.bufnr, { force = true }) -- Remove unsynced buffer
-			hbufs[name] = nil -- Clear from our tracking table
-			goto continue
+			table.insert(bufsbin, bufr.bufnr) -- Add to recycle bin
+			vim.api.nvim_buf_set_lines(bufr.bufnr, 0, -1, false, {})
+			hbufs[name] = nil -- Clear from tracking table
 		end
-
-		if vim.api.nvim_buf_is_valid(bufr.bufnr) then
-			vim.lsp.start({
-				name = "pyglue_bglsp",
-				cmd = M.lsp_cmd,
-				root_dir = vim.fn.getcwd(),
-			}, {
-				bufnr = bufr.bufnr,
-			})
-		end
-		::continue::
 	end
 end
 
@@ -63,7 +74,7 @@ local function printhbufs()
 
 		local lines = vim.api.nvim_buf_get_lines(bufr.bufnr, 0, -1, false)
 
-		print("Hidden Buffer (", name, ") Contents:")
+		print("Hidden Buffer (", name, bufr.bufnr, ") Contents:")
 		print(vim.inspect(lines))
 	end
 end
@@ -120,7 +131,7 @@ function M.extract_snippet(bufnr)
 			local node = type(nodes) == "table" and nodes[1] or nodes
 
 			if capture_name == "python.namespace" then
-				namespace = vim.treesitter.get_node_text(node, bufnr)
+				namespace = vim.treesitter.get_node_text(node, bufnr):gsub('"', "")
 			elseif capture_name == "python.code" then
 				code_text = vim.treesitter.get_node_text(node, bufnr)
 				start_row, _, end_row, _ = node:range()
