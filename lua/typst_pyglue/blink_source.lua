@@ -27,16 +27,6 @@ function source:get_completions(context, callback)
 
 	local bufr = buffers.ltbufs[main_bufnr][main_row].bufr
 	local linhbuf = buffers.ltbufs[main_bufnr][main_row].lnum
-	print(
-		"Blink source: main_bufnr =",
-		main_bufnr,
-		"main_row =",
-		main_row,
-		"main_col =",
-		main_col,
-		"corresponding_row =",
-		linhbuf
-	)
 
 	if not bufr then
 		callback()

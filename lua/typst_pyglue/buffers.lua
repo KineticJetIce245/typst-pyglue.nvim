@@ -1,3 +1,5 @@
+local script = require("typst_pyglue.exescript")
+
 local M = {
 	lsp_cmd = nil,
 	ltbufs = {},
@@ -74,9 +76,15 @@ local function syncbuf(mainbuf, snippets)
 			end
 		end
 		-- Extra line at the end to prevent out-of-bounds errors in diagnostics
-		table.insert(bufr.chunk_rows, bufr.chunk_rows[#bufr.chunk_rows] + 1)
+		if #bufr.chunk_rows > 0 then
+			table.insert(bufr.chunk_rows, bufr.chunk_rows[#bufr.chunk_rows] + 1)
+		end
 		-- Fill up the buffer with the new lines
 		vim.api.nvim_buf_set_lines(bufr.bufnr, 0, -1, false, buflines)
+	end
+
+	if not hbufs[mainbuf] then
+		return
 	end
 
 	for _, bufr in pairs(hbufs[mainbuf]) do
@@ -88,27 +96,32 @@ end
 
 function M.printhbufs()
 	for mbuf, _ in pairs(hbufs) do
-		if mbuf == "reflection" then
-			vim.print("Reflection Table:")
-			vim.print(hbufs.reflection)
-			goto continue
-		elseif mbuf == "status" then
-			vim.print("Status Table:")
-			vim.print(hbufs.status)
+		if mbuf == "reflection" or mbuf == "status" then
 			goto continue
 		end
+
 		for name, bufr in pairs(hbufs[mbuf]) do
-			print("Buffer for", mbuf, "->", name, bufr.bufnr, "Status:", bufr.status)
 			if not bufr.bufnr or not vim.api.nvim_buf_is_valid(bufr.bufnr) then
-				print("Error: Hidden buffer does not exist.")
+				vim.notify(
+					"Hidden buffer" .. bufr.bufnr .. " for " .. mbuf .. ":" .. name .. " is invalid or missing.",
+					vim.log.levels.WARN
+				)
 				return
 			end
-
 			local lines = vim.api.nvim_buf_get_lines(bufr.bufnr, 0, -1, false)
-
-			print("Hidden Buffer from", mbuf, ": (", name, bufr.bufnr, ")")
-			vim.print(bufr.chunk_rows)
-			print(vim.inspect(lines))
+			print(
+				"Hidden Buffer from "
+					.. mbuf
+					.. ": ("
+					.. name
+					.. " "
+					.. bufr.bufnr
+					.. ") \n"
+					.. vim.inspect(bufr.chunk_rows)
+					.. "\n"
+					.. vim.inspect(lines),
+				vim.log.levels.DEBUG
+			)
 		end
 		::continue::
 	end
@@ -197,10 +210,21 @@ function M.extract_snippet(bufnr)
 	end
 
 	syncbuf(bufnr, snippets)
-	M.printhbufs()
 end
 
-function M.setup_diagnostics()
+function M.run_allbufs()
+	for mainbuf, _ in pairs(hbufs) do
+		if mainbuf == "reflection" or mainbuf == "status" then
+			goto continue
+		end
+		for _, bufr in pairs(hbufs[mainbuf]) do
+			script.run_buf(bufr.bufnr)
+		end
+		::continue::
+	end
+end
+
+function M.setup_diags()
 	vim.api.nvim_create_autocmd("DiagnosticChanged", {
 		callback = function(args)
 			if hbufs.reflection[args.buf] == nil then

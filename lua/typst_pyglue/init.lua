@@ -3,20 +3,15 @@ local buffers = require("typst_pyglue.buffers")
 
 local M = {}
 
-local function print_message()
-	print("hello world")
-end
-
-M.print_message = print_message
-
 M.setup = function(opts)
 	config.options = vim.tbl_deep_extend("force", config.defaults, opts or {})
+
 	buffers.lsp_cmd = config.options.python_lsp_cmd
-	buffers.setup_diagnostics()
+	buffers.setup_diags()
 
 	if config.options.create_keymaps then
 		-- Run all code snippets
-		vim.keymap.set("n", config.options.keys.run[1], M.print_message, {
+		vim.keymap.set("n", config.options.keys.run[1], buffers.run_allbufs, {
 			desc = config.options.keys.run.desc,
 			noremap = true,
 			silent = false,
