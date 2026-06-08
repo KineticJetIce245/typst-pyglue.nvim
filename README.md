@@ -19,7 +19,7 @@ To use the plugin, you need to first define the `#pyglue` function at the top of
 // You can leave it empty so the code is not rendered
 }
 ```
-define your Python code blocks using the `#pyglue` function. You must provide a "namespace" as the first argument, followed by a Python code blocks.
+To write and execute the codes, you must provide a "namespace" as the first argument, followed by the Python code block.
 The plugin will automatically _glue_ code blocks that share the same namespace. This allows you to write continuous scripts that are broken up by Typst text, without losing your variable state or context.
 
 ### Example
