@@ -49,11 +49,19 @@ local function getbuf(mainbuf, name)
 end
 
 local function unassign_buf(mainbuf, bufnr)
-	table.insert(bufsbin, bufnr) -- Add to recycle bin
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
 	local name = hbufs.reflection[bufnr].name
-	hbufs[mainbuf][name] = nil -- Clear from tracking table
-	hbufs.reflection[bufnr] = nil -- Clear reflection entry
+
+	-- Needs to clear diagnostics before unassigning
+	local diag_namespace = vim.api.nvim_create_namespace("pyglue" .. name)
+	if vim.api.nvim_buf_is_valid(mainbuf) then
+		vim.diagnostic.set(diag_namespace, mainbuf, {})
+	end
+
+	table.insert(bufsbin, bufnr)
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+
+	hbufs[mainbuf][name] = nil
+	hbufs.reflection[bufnr] = nil
 end
 
 local function syncbuf(mainbuf, snippets)
@@ -147,8 +155,8 @@ local function strip_content(content)
 		return {}
 	end
 
-	table.remove(lines, 1) -- Remove the first line ([@]start)
-	table.remove(lines, #lines) -- Remove the last line
+	table.remove(lines, 1)
+	table.remove(lines, #lines)
 
 	return lines
 end
@@ -174,10 +182,8 @@ function M.extract_snippet(bufnr)
 		local code_text = nil
 		local start_row, end_row = nil, nil
 
-		-- Loop through the captures for this specific match
 		for id, nodes in pairs(match) do
 			local capture_name = query.captures[id]
-			-- Neovim API quirk: `nodes` can sometimes be a table of nodes, or a single node.
 			local node = type(nodes) == "table" and nodes[1] or nodes
 
 			if capture_name == "python.namespace" then
@@ -258,7 +264,6 @@ function M.setup_diags()
 			local diag_namespace = vim.api.nvim_create_namespace("pyglue" .. name)
 			vim.schedule(function()
 				if vim.api.nvim_buf_is_valid(mainbuf) then
-					-- Clears the main buffer and inserts the new diagnostic lines
 					vim.diagnostic.set(diag_namespace, mainbuf, diagnostics)
 				end
 			end)
