@@ -52,13 +52,25 @@ function source:get_completions(context, callback)
 
 		local items = result.items or result
 
+		local function translate_range(r)
+			if not r then
+				return
+			end
+			local ldiff = r["end"].line - r.start.line
+			r.start.line = main_row - 1
+			r["end"].line = main_row - 1 + ldiff
+		end
+
 		for _, item in ipairs(items) do
 			if item.textEdit then
-				local edit_range = item.textEdit.range or item.textEdit.insert
-				if edit_range then
-					local ldiff = edit_range["end"].line - edit_range.start.line
-					edit_range.start.line = main_row - 1
-					edit_range["end"].line = main_row - 1 + ldiff
+				if item.textEdit.range then
+					translate_range(item.textEdit.range)
+				end
+				if item.textEdit.insert then
+					translate_range(item.textEdit.insert)
+				end
+				if item.textEdit.replace then
+					translate_range(item.textEdit.replace)
 				end
 			end
 

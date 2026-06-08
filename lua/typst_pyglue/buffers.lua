@@ -368,7 +368,13 @@ local function proxy_result(method, result, hbuf, mainbufnr)
 		return loc
 	end
 
-	if method == "textDocument/definition" or method == "textDocument/references" then
+	if
+		method == "textDocument/definition"
+		or method == "textDocument/declaration"
+		or method == "textDocument/typeDefinition"
+		or method == "textDocument/implementation"
+		or method == "textDocument/references"
+	then
 		if vim.islist(result) then
 			local translated_list = {}
 			for _, loc in ipairs(result) do
@@ -382,6 +388,12 @@ local function proxy_result(method, result, hbuf, mainbufnr)
 		local new_hover = vim.deepcopy(result)
 		new_hover.range = translate_range(result.range)
 		return new_hover
+	elseif method == "textDocument/documentHighlight" then
+		local new_highlights = vim.deepcopy(result)
+		for _, highlight in pairs(new_highlights) do
+			highlight.range = translate_range(highlight.range)
+		end
+		return new_highlights
 	elseif method == "textDocument/rename" then
 		local is_changes = result.changes ~= nil
 		local changes = is_changes and result.changes or result.documentChanges
@@ -411,6 +423,7 @@ end
 function M.setup_proxy_to_lsp(client)
 	local original_request = client.request
 	client.request = function(self, method, params, handler, bufnr)
+		-- Get the buffer number from params or use the current buffer as fallback
 		if (not bufnr) or (bufnr == 0) then
 			if params and params.textDocument and params.textDocument.uri then
 				bufnr = vim.uri_to_bufnr(params.textDocument.uri)
@@ -421,25 +434,35 @@ function M.setup_proxy_to_lsp(client)
 
 		local cursor_loc = vim.api.nvim_win_get_cursor(0)
 
+		-- Check if cursor is within a snippet and if the request is position-based.
 		if (not M.ltbufs) or not M.ltbufs[bufnr] or not M.ltbufs[bufnr][cursor_loc[1]] then
 			return original_request(self, method, params, handler, bufnr)
 		end
 		-- Requests that are based on the cursor position
 		local position_based_methods = {
+			-- Navigation
 			["textDocument/definition"] = true,
-			["textDocument/hover"] = true,
+			["textDocument/declaration"] = true,
+			["textDocument/typeDefinition"] = true,
+			["textDocument/implementation"] = true,
 			["textDocument/references"] = true,
+			["textDocument/documentHighlight"] = true,
+			-- UI / Information
+			["textDocument/hover"] = true,
+			["textDocument/signatureHelp"] = true,
+			-- Edits
 			["textDocument/rename"] = true,
 		}
 
+		-- Chekc if the method is one of the position-based methods we want to proxy.
 		if not position_based_methods[method] then
 			return original_request(self, method, params, handler, bufnr)
 		end
 
 		if params and type(params) == "table" and params.position then
+			-- Obtain bufnr from the main buffer row position
 			local hbuf = M.ltbufs[bufnr][cursor_loc[1]].bufr
 			local hbufnr = hbuf.bufnr
-			print("Hidden buffer number: " .. hbufnr)
 			local hclient = vim.lsp.get_clients({ bufnr = hbufnr })[1]
 
 			if not hclient then
@@ -452,24 +475,30 @@ function M.setup_proxy_to_lsp(client)
 			end
 
 			local hidden_params = vim.deepcopy(params)
+
+			-- Override the textDocument.uri to point to the hidden buffer and adjust the position
 			hidden_params.textDocument.uri = vim.uri_from_bufnr(hbufnr)
 			hidden_params.position.line = M.ltbufs[bufnr][params.position.line + 1].lnum - 1
 
+			-- handler could be nil for some methods
+			local actual_handler = handler or self.handlers[method] or vim.lsp.handlers[method]
+			-- Fire the request on the hidden buffer's LSP client
 			return hclient:request(method, hidden_params, function(err, result, ctx, config)
 				if err or not result then
-					return handler(err, result, ctx, config)
+					return actual_handler(err, result, ctx, config)
 				end
 				local translated_result = proxy_result(method, result, hbuf, bufnr)
 				vim.print("Translated result: ", vim.inspect(translated_result))
-				-- Overriding context
+				-- Override the contexts
 				ctx.bufnr = bufnr
 				ctx.client_id = client.id
 				ctx.params = params
 				vim.print("Context for handler: ", vim.inspect(ctx))
-				handler(err, translated_result, ctx, config)
+				actual_handler(err, translated_result, ctx, config)
 			end, hbufnr)
 		end
 
+		-- Non table params or missing position, fallback to original request
 		return original_request(self, method, params, handler, bufnr)
 	end
 end
