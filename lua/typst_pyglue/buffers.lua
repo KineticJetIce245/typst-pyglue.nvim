@@ -168,7 +168,7 @@ function M.extract_snippet(bufnr)
 
 	local ok, parser = pcall(vim.treesitter.get_parser, bufnr, "typst")
 	if not ok or not parser then
-		vim.notify("Error: Tree-sitter parser not available for this buffer.", vim.log.levels.ERROR)
+		vim.notify("typst-pyglue.nvim: Tree-sitter parser not available for this buffer.", vim.log.levels.ERROR)
 		return
 	end
 
@@ -198,7 +198,7 @@ function M.extract_snippet(bufnr)
 		end
 
 		if not namespace or not code_text then
-			vim.notify("Error: Missing namespace or code capture in match.", vim.log.levels.ERROR)
+			vim.notify("typst-pyglue.nvim: Missing namespace or code capture in match.", vim.log.levels.ERROR)
 			return
 		end
 
@@ -224,9 +224,28 @@ function M.run_allbufs()
 			goto continue
 		end
 		for _, bufr in pairs(hbufs[mainbuf]) do
-			script.run_buf(bufr.bufnr)
+			script.run_buf(bufr.bufnr, hbufs.reflection[bufr.bufnr].name)
 		end
 		::continue::
+	end
+end
+
+function M.run_cursor()
+	local mainbuf = vim.api.nvim_get_current_buf()
+	local cursor = vim.api.nvim_win_get_cursor(0)
+
+	local row = cursor[1]
+
+	if not M.ltbufs or not M.ltbufs[mainbuf] or not M.ltbufs[mainbuf][row] then
+		vim.notify("typst-pyglue.nvim: No valid snippet found for the current line.", vim.log.levels.WARN)
+		return
+	end
+
+	local bufr = M.ltbufs[mainbuf][row].bufr
+	if bufr and vim.api.nvim_buf_is_valid(bufr.bufnr) then
+		script.run_buf(bufr.bufnr, hbufs.reflection[bufr.bufnr].name)
+	else
+		vim.notify("typst-pyglue.nvim: No valid snippet found for the current line.", vim.log.levels.WARN)
 	end
 end
 
@@ -249,7 +268,10 @@ function M.setup_diags()
 				new_diag.end_lnum = hbufs[mainbuf][name].chunk_rows[diag.end_lnum + 1] - 1
 
 				if not new_diag.end_lnum or not new_diag.lnum then
-					vim.notify("Warning: Diagnostic missing end_lnum or num, skipping adjustment.", vim.log.levels.WARN)
+					vim.notify(
+						"typst-pyglue.nvim: Diagnostic missing end_lnum or num, skipping adjustment.",
+						vim.log.levels.WARN
+					)
 				end
 
 				if new_diag.lnum < 0 then

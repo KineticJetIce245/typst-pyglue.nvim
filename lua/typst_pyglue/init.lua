@@ -3,6 +3,9 @@ local buffers = require("typst_pyglue.buffers")
 
 local M = {}
 
+M.run_allbufs = buffers.run_allbufs
+M.run_cursor = buffers.run_cursor
+
 M.setup = function(opts)
 	config.options = vim.tbl_deep_extend("force", config.defaults, opts or {})
 
@@ -13,6 +16,12 @@ M.setup = function(opts)
 		-- Run all code snippets
 		vim.keymap.set("n", config.options.keys.run[1], buffers.run_allbufs, {
 			desc = config.options.keys.run.desc,
+			noremap = true,
+			silent = false,
+		})
+
+		vim.keymap.set("n", config.options.keys.run_cursor[1], buffers.run_cursor, {
+			desc = config.options.keys.run_cursor.desc,
 			noremap = true,
 			silent = false,
 		})
