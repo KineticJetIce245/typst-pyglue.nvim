@@ -488,12 +488,10 @@ function M.setup_proxy_to_lsp(client)
 					return actual_handler(err, result, ctx, config)
 				end
 				local translated_result = proxy_result(method, result, hbuf, bufnr)
-				vim.print("Translated result: ", vim.inspect(translated_result))
 				-- Override the contexts
 				ctx.bufnr = bufnr
 				ctx.client_id = client.id
 				ctx.params = params
-				vim.print("Context for handler: ", vim.inspect(ctx))
 				actual_handler(err, translated_result, ctx, config)
 			end, hbufnr)
 		end
