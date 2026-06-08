@@ -22,7 +22,7 @@ local function assign_buf() -- Recyle buffers if possible
 		vim.api.nvim_buf_set_name(newbuf, virtual_name)
 
 		vim.lsp.start({
-			name = "pyglue_background_lsp",
+			name = "pyglue_background_ls",
 			cmd = M.lsp_cmd,
 			root_dir = vim.fn.getcwd(),
 		}, {
@@ -170,7 +170,7 @@ function M.extract_snippet(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
 	local tree_ok, parser = pcall(vim.treesitter.get_parser, bufnr, "typst")
-	if not tree_ok or not parser then
+	if (not tree_ok) or not parser then
 		vim.notify(
 			"Tree-sitter parser not available for this buffer.",
 			vim.log.levels.ERROR,
@@ -183,7 +183,7 @@ function M.extract_snippet(bufnr)
 	local root = tree:root()
 
 	local query_okay, query = pcall(vim.treesitter.query.parse, "typst", extraction_query)
-	if not query_okay or not query then
+	if (not query_okay) or not query then
 		vim.notify(
 			"Failed to parse Tree-sitter query: " .. tostring(query),
 			vim.log.levels.ERROR,
@@ -212,7 +212,7 @@ function M.extract_snippet(bufnr)
 			end
 		end
 
-		if not namespace or not code_text then
+		if (not namespace) or not code_text then
 			vim.notify(
 				"Missing namespace or code capture in match.",
 				vim.log.levels.ERROR,
@@ -255,7 +255,7 @@ function M.run_cursor()
 
 	local row = cursor[1]
 
-	if not M.ltbufs or not M.ltbufs[mainbuf] or not M.ltbufs[mainbuf][row] then
+	if (not M.ltbufs) or not M.ltbufs[mainbuf] or not M.ltbufs[mainbuf][row] then
 		vim.notify("No valid snippet found for the current line.", vim.log.levels.WARN, { title = "typst-pyglue.nvim" })
 		return
 	end
@@ -279,7 +279,7 @@ function M.setup_diags()
 			local diagnostics = vim.diagnostic.get(args.buf)
 			local name = hbufs.reflection[args.buf].name
 
-			if not mainbuf or not diagnostics or not name then
+			if (not mainbuf) or not diagnostics or not name then
 				vim.notify(
 					"Missing mainbuf, diagnostics, or name for buffer "
 						.. args.buf
@@ -296,7 +296,7 @@ function M.setup_diags()
 				new_diag.lnum = hbufs[mainbuf][name].chunk_rows[diag.lnum + 1] - 1
 				new_diag.end_lnum = hbufs[mainbuf][name].chunk_rows[diag.end_lnum + 1] - 1
 
-				if not new_diag.end_lnum or not new_diag.lnum then
+				if (not new_diag.end_lnum) or not new_diag.lnum then
 					vim.notify(
 						"Diagnostic missing end_lnum or num, skipping adjustment.",
 						vim.log.levels.WARN,
@@ -321,6 +321,157 @@ function M.setup_diags()
 			end)
 		end,
 	})
+end
+
+local function proxy_result(method, result, hbuf, mainbufnr)
+	local hbufnr = hbuf.bufnr
+	if (not result) or vim.tbl_isempty(result) then
+		return result
+	end
+
+	local main_uri = vim.uri_from_bufnr(mainbufnr)
+
+	local function translate_range(range)
+		if not range then
+			return range
+		end
+
+		local new_range = vim.deepcopy(range)
+		new_range.start.line = hbuf.chunk_rows[range.start.line + 1] - 1
+		new_range["end"].line = hbuf.chunk_rows[range["end"].line + 1] - 1
+
+		return new_range
+	end
+
+	local function translate_location(loc)
+		local is_loc = loc.uri ~= nil
+		local uri = is_loc and loc.uri or loc.targetUri
+		if not uri then
+			return loc
+		end
+
+		if vim.uri_to_bufnr(uri) == hbufnr then
+			local new_loc = vim.deepcopy(loc)
+
+			if is_loc then
+				new_loc.uri = main_uri
+				new_loc.range = translate_range(loc.range)
+			else
+				new_loc.targetUri = main_uri
+				new_loc.targetRange = translate_range(loc.targetRange)
+				new_loc.targetSelectionRange = translate_range(loc.targetSelectionRange)
+			end
+
+			return new_loc
+		end
+
+		return loc
+	end
+
+	if method == "textDocument/definition" or method == "textDocument/references" then
+		if vim.islist(result) then
+			local translated_list = {}
+			for _, loc in ipairs(result) do
+				table.insert(translated_list, translate_location(loc))
+			end
+			return translated_list
+		else
+			return translate_location(result)
+		end
+	elseif method == "textDocument/hover" then
+		local new_hover = vim.deepcopy(result)
+		new_hover.range = translate_range(result.range)
+		return new_hover
+	elseif method == "textDocument/rename" then
+		local is_changes = result.changes ~= nil
+		local changes = is_changes and result.changes or result.documentChanges
+		if not changes then
+			return result
+		end
+		local new_edit = vim.deepcopy(result)
+		local entries = is_changes and new_edit.changes or new_edit.documentChanges
+
+		for _, entry in pairs(entries) do
+			local is_uri, uribufnr = pcall(vim.uri_to_bufnr, entry.textDocument.uri)
+			if (not is_uri) or not uribufnr or (uribufnr ~= hbufnr) then
+				goto continue
+			end
+			entry.textDocument.uri = main_uri
+			for _, edit in pairs(entry.edits) do
+				edit.range = translate_range(edit.range)
+			end
+			::continue::
+		end
+		return new_edit
+	end
+
+	return result
+end
+
+function M.setup_proxy_to_lsp(client)
+	local original_request = client.request
+	client.request = function(self, method, params, handler, bufnr)
+		if (not bufnr) or (bufnr == 0) then
+			if params and params.textDocument and params.textDocument.uri then
+				bufnr = vim.uri_to_bufnr(params.textDocument.uri)
+			else
+				bufnr = vim.api.nvim_get_current_buf()
+			end
+		end
+
+		local cursor_loc = vim.api.nvim_win_get_cursor(0)
+
+		if (not M.ltbufs) or not M.ltbufs[bufnr] or not M.ltbufs[bufnr][cursor_loc[1]] then
+			return original_request(self, method, params, handler, bufnr)
+		end
+		-- Requests that are based on the cursor position
+		local position_based_methods = {
+			["textDocument/definition"] = true,
+			["textDocument/hover"] = true,
+			["textDocument/references"] = true,
+			["textDocument/rename"] = true,
+		}
+
+		if not position_based_methods[method] then
+			return original_request(self, method, params, handler, bufnr)
+		end
+
+		if params and type(params) == "table" and params.position then
+			local hbuf = M.ltbufs[bufnr][cursor_loc[1]].bufr
+			local hbufnr = hbuf.bufnr
+			print("Hidden buffer number: " .. hbufnr)
+			local hclient = vim.lsp.get_clients({ bufnr = hbufnr })[1]
+
+			if not hclient then
+				vim.notify(
+					"No LSP client attached to hidden buffer " .. hbufnr .. ". Cannot proxy request.",
+					vim.log.levels.WARN,
+					{ title = "typst-pyglue.nvim" }
+				)
+				return original_request(self, method, params, handler, bufnr)
+			end
+
+			local hidden_params = vim.deepcopy(params)
+			hidden_params.textDocument.uri = vim.uri_from_bufnr(hbufnr)
+			hidden_params.position.line = M.ltbufs[bufnr][params.position.line + 1].lnum - 1
+
+			return hclient:request(method, hidden_params, function(err, result, ctx, config)
+				if err or not result then
+					return handler(err, result, ctx, config)
+				end
+				local translated_result = proxy_result(method, result, hbuf, bufnr)
+				vim.print("Translated result: ", vim.inspect(translated_result))
+				-- Overriding context
+				ctx.bufnr = bufnr
+				ctx.client_id = client.id
+				ctx.params = params
+				vim.print("Context for handler: ", vim.inspect(ctx))
+				handler(err, translated_result, ctx, config)
+			end, hbufnr)
+		end
+
+		return original_request(self, method, params, handler, bufnr)
+	end
 end
 
 return M

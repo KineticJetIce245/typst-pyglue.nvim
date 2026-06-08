@@ -1,7 +1,9 @@
 local config = require("typst_pyglue.config")
 local buffers = require("typst_pyglue.buffers")
 
-local M = {}
+local M = {
+	proxied_lsp = {},
+}
 
 M.run_allbufs = buffers.run_allbufs
 M.run_cursor = buffers.run_cursor
@@ -43,12 +45,47 @@ M.setup = function(opts)
 	end
 
 	-- Buffer extractions
-	local mbufextra = vim.api.nvim_create_augroup("LiveSnippetExtractor", { clear = true })
+	local tpgroup = vim.api.nvim_create_augroup("TypstPyglue", { clear = true })
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "TextChanged", "TextChangedI" }, {
-		group = mbufextra,
+		group = tpgroup,
 		pattern = "*.typ",
 		callback = function(args)
 			buffers.extract_snippet(args.buf)
+		end,
+	})
+
+	-- Setup LSP proxying on attach
+	vim.api.nvim_create_autocmd("LspAttach", {
+		group = tpgroup,
+		pattern = "*.typ",
+		callback = function(args)
+			local main_bufnr = args.buf
+			local client = vim.lsp.get_client_by_id(args.data.client_id)
+
+			-- Filter: Only proceed if the attached client is a Typst LSP
+			if not client or (client.name ~= "tinymist" and client.name ~= "typst_lsp") then
+				return
+			end
+
+			print("Attaching typst-pyglue proxy to LSP client:", client.name)
+
+			if M.proxied_lsp[client.id] then
+				return
+			end
+			M.proxied_lsp[client.id] = true
+
+			buffers.setup_proxy_to_lsp(client)
+		end,
+	})
+
+	vim.api.nvim_create_autocmd("LspDetach", {
+		group = tpgroup,
+		pattern = "*.typ",
+		callback = function(args)
+			local client_id = args.data.client_id
+			if M.proxied_lsp[client_id] then
+				M.proxied_lsp[client_id] = nil
+			end
 		end,
 	})
 end
