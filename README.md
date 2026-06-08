@@ -38,7 +38,7 @@ At the start of your Typst document, define an empty function called `pyglue` wi
 ```typst
 #let pyglue(name, code) = {}
 ```
-To can define code snippets as follows:
+You can define code snippets as follows:
 ````typst
 #pyglue("space1", ```python
 x = 10
