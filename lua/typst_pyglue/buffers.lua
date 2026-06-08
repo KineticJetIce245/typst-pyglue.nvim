@@ -3,6 +3,7 @@ local script = require("typst_pyglue.exescript")
 local M = {
 	lsp_cmd = nil,
 	ltbufs = {},
+	python_cmd = nil,
 }
 
 local hbufs = {
@@ -21,7 +22,7 @@ local function assign_buf() -- Recyle buffers if possible
 		vim.api.nvim_buf_set_name(newbuf, virtual_name)
 
 		vim.lsp.start({
-			name = "pyglue_bglsp",
+			name = "pyglue_background_lsp",
 			cmd = M.lsp_cmd,
 			root_dir = vim.fn.getcwd(),
 		}, {
@@ -112,12 +113,13 @@ function M.printhbufs()
 			if not bufr.bufnr or not vim.api.nvim_buf_is_valid(bufr.bufnr) then
 				vim.notify(
 					"Hidden buffer" .. bufr.bufnr .. " for " .. mbuf .. ":" .. name .. " is invalid or missing.",
-					vim.log.levels.WARN
+					vim.log.levels.WARN,
+					{ title = "typst-pyglue.nvim" }
 				)
 				return
 			end
 			local lines = vim.api.nvim_buf_get_lines(bufr.bufnr, 0, -1, false)
-			print(
+			vim.notify(
 				"Hidden Buffer from "
 					.. mbuf
 					.. ": ("
@@ -128,7 +130,8 @@ function M.printhbufs()
 					.. vim.inspect(bufr.chunk_rows)
 					.. "\n"
 					.. vim.inspect(lines),
-				vim.log.levels.DEBUG
+				vim.log.levels.DEBUG,
+				{ title = "typst-pyglue.nvim" }
 			)
 		end
 		::continue::
@@ -166,16 +169,28 @@ function M.extract_snippet(bufnr)
 
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
-	local ok, parser = pcall(vim.treesitter.get_parser, bufnr, "typst")
-	if not ok or not parser then
-		vim.notify("typst-pyglue.nvim: Tree-sitter parser not available for this buffer.", vim.log.levels.ERROR)
+	local tree_ok, parser = pcall(vim.treesitter.get_parser, bufnr, "typst")
+	if not tree_ok or not parser then
+		vim.notify(
+			"Tree-sitter parser not available for this buffer.",
+			vim.log.levels.ERROR,
+			{ title = "typst-pyglue.nvim" }
+		)
 		return
 	end
 
 	local tree = parser:parse()[1]
 	local root = tree:root()
 
-	local query = vim.treesitter.query.parse("typst", extraction_query)
+	local query_okay, query = pcall(vim.treesitter.query.parse, "typst", extraction_query)
+	if not query_okay or not query then
+		vim.notify(
+			"Failed to parse Tree-sitter query: " .. tostring(query),
+			vim.log.levels.ERROR,
+			{ title = "typst-pyglue.nvim" }
+		)
+		return
+	end
 
 	for _, match, _ in query:iter_matches(root, bufnr, 0, -1) do
 		local namespace = nil
@@ -198,7 +213,11 @@ function M.extract_snippet(bufnr)
 		end
 
 		if not namespace or not code_text then
-			vim.notify("typst-pyglue.nvim: Missing namespace or code capture in match.", vim.log.levels.ERROR)
+			vim.notify(
+				"Missing namespace or code capture in match.",
+				vim.log.levels.ERROR,
+				{ title = "typst-pyglue.nvim" }
+			)
 			return
 		end
 
@@ -224,7 +243,7 @@ function M.run_allbufs()
 			goto continue
 		end
 		for _, bufr in pairs(hbufs[mainbuf]) do
-			script.run_buf(bufr.bufnr, hbufs.reflection[bufr.bufnr].name)
+			script.run_buf(M.python_cmd, bufr.bufnr, hbufs.reflection[bufr.bufnr].name)
 		end
 		::continue::
 	end
@@ -237,15 +256,15 @@ function M.run_cursor()
 	local row = cursor[1]
 
 	if not M.ltbufs or not M.ltbufs[mainbuf] or not M.ltbufs[mainbuf][row] then
-		vim.notify("typst-pyglue.nvim: No valid snippet found for the current line.", vim.log.levels.WARN)
+		vim.notify("No valid snippet found for the current line.", vim.log.levels.WARN, { title = "typst-pyglue.nvim" })
 		return
 	end
 
 	local bufr = M.ltbufs[mainbuf][row].bufr
 	if bufr and vim.api.nvim_buf_is_valid(bufr.bufnr) then
-		script.run_buf(bufr.bufnr, hbufs.reflection[bufr.bufnr].name)
+		script.run_buf(M.python_cmd, bufr.bufnr, hbufs.reflection[bufr.bufnr].name)
 	else
-		vim.notify("typst-pyglue.nvim: No valid snippet found for the current line.", vim.log.levels.WARN)
+		vim.notify("No valid snippet found for the current line.", vim.log.levels.WARN, { title = "typst-pyglue.nvim" })
 	end
 end
 
@@ -260,17 +279,28 @@ function M.setup_diags()
 			local diagnostics = vim.diagnostic.get(args.buf)
 			local name = hbufs.reflection[args.buf].name
 
+			if not mainbuf or not diagnostics or not name then
+				vim.notify(
+					"Missing mainbuf, diagnostics, or name for buffer "
+						.. args.buf
+						.. ". Skipping diagnostic adjustment.",
+					vim.log.levels.WARN,
+					{ title = "typst-pyglue.nvim" }
+				)
+				return
+			end
+
 			for _, diag in ipairs(diagnostics) do
 				local new_diag = diag
 
 				new_diag.lnum = hbufs[mainbuf][name].chunk_rows[diag.lnum + 1] - 1
-
 				new_diag.end_lnum = hbufs[mainbuf][name].chunk_rows[diag.end_lnum + 1] - 1
 
 				if not new_diag.end_lnum or not new_diag.lnum then
 					vim.notify(
-						"typst-pyglue.nvim: Diagnostic missing end_lnum or num, skipping adjustment.",
-						vim.log.levels.WARN
+						"Diagnostic missing end_lnum or num, skipping adjustment.",
+						vim.log.levels.WARN,
+						{ title = "typst-pyglue.nvim" }
 					)
 				end
 

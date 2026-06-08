@@ -9,6 +9,7 @@ M.run_cursor = buffers.run_cursor
 M.setup = function(opts)
 	config.options = vim.tbl_deep_extend("force", config.defaults, opts or {})
 
+	buffers.python_cmd = config.options.python_cmd
 	buffers.lsp_cmd = config.options.python_lsp_cmd
 	buffers.setup_diags()
 
@@ -26,7 +27,7 @@ M.setup = function(opts)
 			silent = false,
 		})
 
-		-- Add which-key integration
+		-- which-key integration
 		local wk_ok, wk = pcall(require, "which-key")
 		if wk_ok then
 			local wk_maps = {}
@@ -41,7 +42,7 @@ M.setup = function(opts)
 		end
 	end
 
-	-- Buffer Extractions
+	-- Buffer extractions
 	local mbufextra = vim.api.nvim_create_augroup("LiveSnippetExtractor", { clear = true })
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "TextChanged", "TextChangedI" }, {
 		group = mbufextra,

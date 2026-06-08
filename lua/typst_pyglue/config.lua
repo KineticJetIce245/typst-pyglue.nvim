@@ -10,6 +10,8 @@ M.defaults = {
 	},
 
 	python_lsp_cmd = { "pyright-langserver", "--stdio" },
+
+	python_cmd = "python",
 }
 
 M.options = {}

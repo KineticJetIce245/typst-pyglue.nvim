@@ -1,8 +1,8 @@
 local M = {}
 
-function M.run_buf(bufnr, name)
+function M.run_buf(python_cmd, bufnr, name)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
-		vim.notify("typst-pyglue.nvim: Buffer " .. bufnr .. " does not exist.", vim.log.levels.ERROR)
+		vim.notify("Buffer " .. bufnr .. " does not exist.", vim.log.levels.ERROR, { title = "typst-pyglue.nvim" })
 		return
 	end
 
@@ -10,7 +10,7 @@ function M.run_buf(bufnr, name)
 
 	local code = table.concat(lines, "\n")
 
-	local result = vim.fn.system({ "python" }, code):gsub("\n$", "")
+	local result = vim.fn.system({ python_cmd }, code):gsub("\n$", "")
 	vim.notify(result, vim.log.levels.INFO, {
 		title = "typst-pyglue.nvim: " .. 'Outputs from "' .. name .. '"',
 	})

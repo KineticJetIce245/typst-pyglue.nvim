@@ -14,13 +14,7 @@ function source:get_completions(context, callback)
 	local main_row = context.cursor[1]
 	local main_col = context.cursor[2]
 
-	if not buffers.ltbufs then
-		callback()
-		return
-	elseif not buffers.ltbufs[main_bufnr] then
-		callback()
-		return
-	elseif not buffers.ltbufs[main_bufnr][main_row] then
+	if not buffers.ltbufs or not buffers.ltbufs[main_bufnr] or not buffers.ltbufs[main_bufnr][main_row] then
 		callback()
 		return
 	end
@@ -29,6 +23,7 @@ function source:get_completions(context, callback)
 	local linhbuf = buffers.ltbufs[main_bufnr][main_row].lnum
 
 	if not bufr then
+		vim.notify("No valid snippet found for current line.", vim.log.levels.WARN, { title = "typst-pyglue.nvim" })
 		callback()
 		return
 	end
