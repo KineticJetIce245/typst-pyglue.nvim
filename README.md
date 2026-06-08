@@ -6,8 +6,12 @@
   - You can run Python codes **directly** from your Typst document.
 - **LSP Support**:
   - It is compatible with Python LSP (e.g., Pyright).
+  - **Supports**:
+    - Diagnostics, document highlights (for variables)
+    - Jump to definition, reference
+    - Signture help, hover
 - **Autocompletion**:
-  - It supports **autocompletion** with `blink.cmp`.
+  - It supports **autocompletion** with `blink.cmp` (source file called `blink_source.lua`)
 - **Namespace *Gluing***:
   - You can define multiple code snippets. They are treated as **different files** by the LSP.
   - You can **glue** fragmented code snippets together by putting them in the same namespace, preserving variables and context across your document.
