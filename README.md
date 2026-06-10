@@ -67,12 +67,12 @@ You can run these isolated namespaces directly from Neovim. Because the executio
   x is 1
   ```
 
-  ### Commands and Default Keymaps
-  | Commands | Keymaps | Action |
-  | --- | --- | --- |
-  | `PyglueRun` `name` | N/A | Run code snippets called `name`. |
-  | `PyglueRunAll` | `<Leader>Pr` | Run all code snippets. |
-  | N/A | `<Leader>Pc` | Run code snippet under cursor. |
+### Commands and Default Keymaps
+| Commands | Keymaps | Action |
+| --- | --- | --- |
+| `PyglueRun` `name` | N/A | Run code snippets called `name`. |
+| `PyglueRunAll` | `<Leader>Pr` | Run all code snippets. |
+| N/A | `<Leader>Pc` | Run code snippet under cursor. |
 
 ## 📦 Installation
 Install typst-pyglue using your preferred package manager. It requires [`nvim-treesitter/nvim-treesitter`](https://github.com/nvim-treesitter/nvim-treesitter) and [`Saghen/blink.cmp`](https://github.com/saghen/blink.cmp).
