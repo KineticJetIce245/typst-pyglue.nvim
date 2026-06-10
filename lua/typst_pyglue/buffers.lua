@@ -268,6 +268,16 @@ function M.run_cursor()
 	end
 end
 
+function M.run_name(name)
+	local mainbuf = vim.api.nvim_get_current_buf()
+	local bufnr = hbufs[mainbuf] and hbufs[mainbuf][name] and hbufs[mainbuf][name].bufnr
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		vim.notify("No valid snippet found for name: " .. name, vim.log.levels.WARN, { title = "typst-pyglue.nvim" })
+		return
+	end
+	script.run_buf(M.python_cmd, bufnr, name)
+end
+
 function M.setup_diags()
 	vim.api.nvim_create_autocmd("DiagnosticChanged", {
 		callback = function(args)

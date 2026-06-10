@@ -6,6 +6,7 @@ local M = {
 }
 
 M.run_allbufs = buffers.run_allbufs
+M.run_name = buffers.run_name
 M.run_cursor = buffers.run_cursor
 
 M.setup = function(opts)
